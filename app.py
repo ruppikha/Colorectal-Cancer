@@ -1,155 +1,163 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pickle
 
 # =========================
-# LOAD MODEL + REFERENCE
+# RULE-BASED SCORING SYSTEM
 # =========================
-@st.cache_resource
-def load_model():
-    with open("cox_model.pkl", "rb") as f:
-        return pickle.load(f)
 
-@st.cache_data
-def load_reference():
-    return pd.read_csv("train_reference.csv")
+def calculate_risk(input_data):
+    score = 0
+    contributions = {}
 
-cph = load_model()
-train_df = load_reference()
+    # AGE
+    if input_data["Age"] >= 70:
+        score += 25
+        contributions["Age (70+)"] = 25
+    elif input_data["Age"] >= 50:
+        score += 15
+        contributions["Age (50-69)"] = 15
+    else:
+        score += 5
+        contributions["Age (<50)"] = 5
 
-features = cph.params_.index
+    # BMI
+    if input_data["BMI"] >= 30:
+        score += 15
+        contributions["BMI (Obese)"] = 15
+    elif input_data["BMI"] >= 25:
+        score += 10
+        contributions["BMI (Overweight)"] = 10
+    else:
+        contributions["BMI (Normal)"] = 0
+
+    # SMOKING
+    if input_data["Smoking"] == "Former":
+        score += 10
+        contributions["Smoking"] = 10
+
+    # ALCOHOL
+    if input_data["Alcohol"] == "Medium":
+        score += 8
+        contributions["Alcohol"] = 8
+
+    # FIBER
+    if input_data["Fiber"] == "Low":
+        score += 12
+        contributions["Low Fiber Diet"] = 12
+
+    # FAMILY HISTORY
+    if input_data["Family_History"] == "Yes":
+        score += 20
+        contributions["Family History"] = 20
+
+    # PHYSICAL ACTIVITY
+    if input_data["Physical_Activity"] == "Low":
+        score += 10
+        contributions["Low Activity"] = 10
+
+    # RED MEAT
+    if input_data["Red_Meat"] == "High":
+        score += 10
+        contributions["High Red Meat"] = 10
+
+    return score, contributions
+
+
+def risk_group(score):
+    if score < 30:
+        return "Low Risk"
+    elif score < 60:
+        return "Medium Risk"
+    else:
+        return "High Risk"
+
 
 # =========================
-# SIDEBAR INPUT
+# UI
 # =========================
+
+st.title("Colorectal Cancer Risk Dashboard (Rule-Based)")
+
 st.sidebar.header("Patient Input")
 
 age = st.sidebar.slider("Age", 20, 90, 50)
 bmi = st.sidebar.slider("BMI", 15.0, 40.0, 25.0)
 
-gender = st.sidebar.selectbox("Gender", ["Female", "Male"])
 smoking = st.sidebar.selectbox("Smoking", ["No", "Former"])
 alcohol = st.sidebar.selectbox("Alcohol", ["Low", "Medium"])
 fiber = st.sidebar.selectbox("Fiber", ["Low", "Medium"])
 
-region = st.sidebar.selectbox(
-    "Region",
-    ["North America", "Asia Pacific", "Latin America"]
-)
+family = st.sidebar.selectbox("Family History", ["No", "Yes"])
+activity = st.sidebar.selectbox("Physical Activity", ["High", "Low"])
+red_meat = st.sidebar.selectbox("Red Meat Consumption", ["Low", "High"])
 
 # =========================
-# BUILD INPUT VECTOR
+# BUILD INPUT
 # =========================
-input_dict = {col: 0 for col in features}
 
-input_dict["Age"] = age
-input_dict["BMI"] = bmi
-
-if "Gender_Male" in features and gender == "Male":
-    input_dict["Gender_Male"] = 1
-
-if "Smoking_Status_Former" in features and smoking == "Former":
-    input_dict["Smoking_Status_Former"] = 1
-
-if "Alcohol_Consumption_Medium" in features and alcohol == "Medium":
-    input_dict["Alcohol_Consumption_Medium"] = 1
-
-if "Fiber_Consumption_Low" in features and fiber == "Low":
-    input_dict["Fiber_Consumption_Low"] = 1
-
-if region == "North America" and "Region_North America" in features:
-    input_dict["Region_North America"] = 1
-elif region == "Asia Pacific" and "Region_Asia Pacific" in features:
-    input_dict["Region_Asia Pacific"] = 1
-elif region == "Latin America" and "Region_Latin America" in features:
-    input_dict["Region_Latin America"] = 1
-
-input_df = pd.DataFrame([input_dict])
+input_data = {
+    "Age": age,
+    "BMI": bmi,
+    "Smoking": smoking,
+    "Alcohol": alcohol,
+    "Fiber": fiber,
+    "Family_History": family,
+    "Physical_Activity": activity,
+    "Red_Meat": red_meat
+}
 
 # =========================
-# RISK PREDICTION
+# CALCULATE RISK
 # =========================
-risk = cph.predict_partial_hazard(input_df).values[0]
 
-all_risk = cph.predict_partial_hazard(train_df)
-risk_percentile = (all_risk < risk).mean()
+score, contributions = calculate_risk(input_data)
+group = risk_group(score)
 
-# risk group
-if risk_percentile < 0.33:
-    group = "Low Risk"
-elif risk_percentile < 0.66:
-    group = "Medium Risk"
-else:
-    group = "High Risk"
+# normalize score (0–100)
+risk_percent = min(score, 100)
 
 # =========================
-# MAIN UI
+# OUTPUT
 # =========================
-st.title("Colorectal Cancer Risk Dashboard")
 
-st.metric("Risk Percentile", f"{risk_percentile*100:.1f}%")
-st.write(f"Higher than {int(risk_percentile*100)}% of similar patients")
-
+st.metric("Risk Score", f"{risk_percent}/100")
 st.metric("Risk Group", group)
 
-# =========================
-# CONTRIBUTIONS (BETTER INTERPRETATION)
-# =========================
-st.subheader("Top Risk Drivers")
-
-coefs = cph.params_
-contributions = (input_df.iloc[0] * coefs)
-
-# sort by importance
-contributions = contributions.reindex(
-    contributions.abs().sort_values(ascending=False).index
-)
-
-top_features = contributions.head(10)
-
-# convert to % impact
-impact = np.exp(top_features) - 1
-
-st.bar_chart(impact)
+st.write(f"This patient falls into the **{group}** category based on rule-based assessment.")
 
 # =========================
-# SIMILAR PATIENTS (IMPROVED)
+# CONTRIBUTIONS
 # =========================
-st.subheader("Similar Patients")
+st.subheader("Risk Drivers")
 
-subset = train_df[
-    (train_df["Age"].between(age - 5, age + 5)) &
-    (train_df["BMI"].between(bmi - 3, bmi + 3))
-]
-
-subset_risk = cph.predict_partial_hazard(subset)
-
-# convert to percentile for interpretation
-avg_percentile = (all_risk < subset_risk.mean()).mean()
-
-st.write(f"Average percentile of similar patients: {avg_percentile*100:.1f}%")
-
-# histogram instead of meaningless line
-hist_data = pd.Series(subset_risk.values)
-st.bar_chart(hist_data.value_counts(bins=20))
+if contributions:
+    contrib_df = pd.DataFrame.from_dict(contributions, orient="index", columns=["Score"])
+    contrib_df = contrib_df.sort_values(by="Score", ascending=True)
+    st.bar_chart(contrib_df)
+else:
+    st.write("No major risk drivers identified.")
 
 # =========================
-# WHAT-IF ANALYSIS (IMPROVED)
+# RULE-BASED EXPLANATION
+# =========================
+st.subheader("Explanation")
+
+for factor, value in contributions.items():
+    st.write(f"• {factor} adds +{value} risk points")
+
+# =========================
+# WHAT-IF ANALYSIS
 # =========================
 st.subheader("What-if Analysis")
 
-new_smoking = st.selectbox("Change Smoking", ["No", "Former"])
+new_smoking = st.selectbox("Change Smoking", ["No", "Former"], key="whatif")
 
-what_if = input_df.copy()
+what_if_input = input_data.copy()
+what_if_input["Smoking"] = new_smoking
 
-if "Smoking_Status_Former" in features:
-    what_if["Smoking_Status_Former"] = 1 if new_smoking == "Former" else 0
+new_score, _ = calculate_risk(what_if_input)
+change = new_score - score
 
-new_risk = cph.predict_partial_hazard(what_if).values[0]
-new_percentile = (all_risk < new_risk).mean()
-
-risk_change = new_percentile - risk_percentile
-
-st.write(f"New Percentile: {new_percentile*100:.1f}%")
-st.write(f"Change in Risk: {risk_change*100:.1f}%")
+st.write(f"New Score: {new_score}/100")
+st.write(f"Change in Risk: {change:+}")
