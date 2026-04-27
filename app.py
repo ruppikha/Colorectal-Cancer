@@ -3,161 +3,191 @@ import pandas as pd
 import numpy as np
 
 # =========================
-# RULE-BASED SCORING SYSTEM
+# LOAD DATA (FULL DATASET)
 # =========================
+@st.cache_data
+def load_data():
+    return pd.read_csv("colorectal_cancer_prediction.csv")
 
-def calculate_risk(input_data):
+df = load_data()
+
+# =========================
+# RISK RULES (INTERNAL ONLY)
+# =========================
+def compute_risk_row(row):
     score = 0
-    contributions = {}
 
-    # AGE
-    if input_data["Age"] >= 70:
-        score += 25
-        contributions["Age (70+)"] = 25
-    elif input_data["Age"] >= 50:
-        score += 15
-        contributions["Age (50-69)"] = 15
-    else:
-        score += 5
-        contributions["Age (<50)"] = 5
+    if row["Age"] >= 70: score += 3
+    elif row["Age"] >= 50: score += 2
+    else: score += 1
 
-    # BMI
-    if input_data["BMI"] >= 30:
-        score += 15
-        contributions["BMI (Obese)"] = 15
-    elif input_data["BMI"] >= 25:
-        score += 10
-        contributions["BMI (Overweight)"] = 10
-    else:
-        contributions["BMI (Normal)"] = 0
+    if row["BMI"] >= 30: score += 2
+    elif row["BMI"] >= 25: score += 1
 
-    # SMOKING
-    if input_data["Smoking"] == "Former":
-        score += 10
-        contributions["Smoking"] = 10
+    if row["Smoking_Status"] == "Former": score += 1
+    if row["Alcohol_Consumption"] == "Medium": score += 1
+    if row["Fiber_Consumption"] == "Low": score += 2
 
-    # ALCOHOL
-    if input_data["Alcohol"] == "Medium":
-        score += 8
-        contributions["Alcohol"] = 8
+    if row["Family_History"] == "Yes": score += 3
+    if row["Previous_Cancer_History"] == "Yes": score += 3
 
-    # FIBER
-    if input_data["Fiber"] == "Low":
-        score += 12
-        contributions["Low Fiber Diet"] = 12
+    if row["Tumor_Aggressiveness"] == "High": score += 3
+    if row["Screening_Regularity"] == "Irregular": score += 2
 
-    # FAMILY HISTORY
-    if input_data["Family_History"] == "Yes":
-        score += 20
-        contributions["Family History"] = 20
+    if row["Physical_Activity_Level"] == "Low": score += 1
+    if row["Red_Meat_Consumption"] == "High": score += 1
 
-    # PHYSICAL ACTIVITY
-    if input_data["Physical_Activity"] == "Low":
-        score += 10
-        contributions["Low Activity"] = 10
-
-    # RED MEAT
-    if input_data["Red_Meat"] == "High":
-        score += 10
-        contributions["High Red Meat"] = 10
-
-    return score, contributions
-
+    return score
 
 def risk_group(score):
-    if score < 30:
-        return "Low Risk"
-    elif score < 60:
-        return "Medium Risk"
+    if score <= 4:
+        return "Low"
+    elif score <= 8:
+        return "Medium"
     else:
-        return "High Risk"
+        return "High"
 
+# apply to dataset
+df["risk_score"] = df.apply(compute_risk_row, axis=1)
+df["risk_group"] = df["risk_score"].apply(risk_group)
 
 # =========================
-# UI
+# USER INPUT
 # =========================
-
-st.title("Colorectal Cancer Risk Dashboard (Rule-Based)")
+st.title("Colorectal Cancer Risk Explorer")
 
 st.sidebar.header("Patient Input")
 
-age = st.sidebar.slider("Age", 20, 90, 50)
-bmi = st.sidebar.slider("BMI", 15.0, 40.0, 25.0)
-
-smoking = st.sidebar.selectbox("Smoking", ["No", "Former"])
-alcohol = st.sidebar.selectbox("Alcohol", ["Low", "Medium"])
-fiber = st.sidebar.selectbox("Fiber", ["Low", "Medium"])
-
-family = st.sidebar.selectbox("Family History", ["No", "Yes"])
-activity = st.sidebar.selectbox("Physical Activity", ["High", "Low"])
-red_meat = st.sidebar.selectbox("Red Meat Consumption", ["Low", "High"])
-
-# =========================
-# BUILD INPUT
-# =========================
-
 input_data = {
-    "Age": age,
-    "BMI": bmi,
-    "Smoking": smoking,
-    "Alcohol": alcohol,
-    "Fiber": fiber,
-    "Family_History": family,
-    "Physical_Activity": activity,
-    "Red_Meat": red_meat
+    "Age": st.sidebar.slider("Age", 20, 90, 50),
+    "Region": st.sidebar.selectbox("Region", df["Region"].unique()),
+    "Race": st.sidebar.selectbox("Ethnicity", df["Race"].unique()),
+    "BMI": st.sidebar.slider("BMI", 15.0, 40.0, 25.0),
+
+    "Smoking_Status": st.sidebar.selectbox("Smoking", df["Smoking_Status"].unique()),
+    "Alcohol_Consumption": st.sidebar.selectbox("Alcohol", df["Alcohol_Consumption"].unique()),
+    "Fiber_Consumption": st.sidebar.selectbox("Fiber", df["Fiber_Consumption"].unique()),
+
+    "Family_History": st.sidebar.selectbox("Family History", df["Family_History"].unique()),
+    "Previous_Cancer_History": st.sidebar.selectbox("Previous Cancer", df["Previous_Cancer_History"].unique()),
+
+    "Tumor_Aggressiveness": st.sidebar.selectbox("Tumor Aggressiveness", df["Tumor_Aggressiveness"].unique()),
+    "Screening_Regularity": st.sidebar.selectbox("Screening", df["Screening_Regularity"].unique()),
+
+    "Physical_Activity_Level": st.sidebar.selectbox("Activity", df["Physical_Activity_Level"].unique()),
+    "Red_Meat_Consumption": st.sidebar.selectbox("Red Meat", df["Red_Meat_Consumption"].unique()),
 }
 
-# =========================
-# CALCULATE RISK
-# =========================
-
-score, contributions = calculate_risk(input_data)
-group = risk_group(score)
-
-# normalize score (0–100)
-risk_percent = min(score, 100)
+# compute patient risk
+patient_score = compute_risk_row(input_data)
+patient_group = risk_group(patient_score)
 
 # =========================
-# OUTPUT
+# OUTPUT (NO SCORE)
 # =========================
-
-st.metric("Risk Score", f"{risk_percent}/100")
-st.metric("Risk Group", group)
-
-st.write(f"This patient falls into the **{group}** category based on rule-based assessment.")
+st.subheader("Patient Risk Category")
+st.success(f"{patient_group} Risk")
 
 # =========================
-# CONTRIBUTIONS
+# INTERACTIVE COMPARISON
 # =========================
-st.subheader("Risk Drivers")
+st.subheader("Compare with Similar Patients")
 
-if contributions:
-    contrib_df = pd.DataFrame.from_dict(contributions, orient="index", columns=["Score"])
-    contrib_df = contrib_df.sort_values(by="Score", ascending=True)
-    st.bar_chart(contrib_df)
+factor = st.selectbox(
+    "Compare by:",
+    ["Age", "Region", "Race", "Gender", "BMI"]
+)
+
+# build subset
+subset = df.copy()
+
+if factor == "Age":
+    subset = df[df["Age"].between(input_data["Age"]-5, input_data["Age"]+5)]
+
+elif factor == "Region":
+    subset = df[df["Region"] == input_data["Region"]]
+
+elif factor == "Race":
+    subset = df[df["Race"] == input_data["Race"]]
+
+elif factor == "BMI":
+    subset = df[df["BMI"].between(input_data["BMI"]-3, input_data["BMI"]+3)]
+
+# distribution
+dist = subset["risk_group"].value_counts(normalize=True)
+
+st.write("Distribution of risk in selected group:")
+st.bar_chart(dist)
+
+# highlight patient position
+st.info(f"Patient falls into **{patient_group}** risk category in this group")
+
+# =========================
+# MULTI-FACTOR FILTER (ADVANCED)
+# =========================
+st.subheader("Refine Comparison")
+
+use_multi = st.checkbox("Match multiple factors")
+
+if use_multi:
+    subset = df[
+        (df["Age"].between(input_data["Age"]-5, input_data["Age"]+5)) &
+        (df["Region"] == input_data["Region"]) &
+        (df["Race"] == input_data["Race"])
+    ]
+
+    dist_multi = subset["risk_group"].value_counts(normalize=True)
+    st.write("More precise comparison:")
+    st.bar_chart(dist_multi)
+
+# =========================
+# WHAT-IF (ALL FACTORS)
+# =========================
+st.subheader("What-if Analysis (All Factors)")
+
+what_if_factor = st.selectbox(
+    "Change Factor",
+    list(input_data.keys())
+)
+
+new_value = st.selectbox(
+    "New Value",
+    df[what_if_factor].unique() if what_if_factor != "Age" and what_if_factor != "BMI"
+    else None
+)
+
+what_if_data = input_data.copy()
+
+if what_if_factor in ["Age", "BMI"]:
+    new_value = st.slider("New Value", 20, 90, input_data[what_if_factor])
+
+what_if_data[what_if_factor] = new_value
+
+new_group = risk_group(compute_risk_row(what_if_data))
+
+st.write(f"New Risk Category: **{new_group}**")
+
+# change explanation
+if new_group != patient_group:
+    st.warning(f"Risk changes from {patient_group} → {new_group}")
 else:
-    st.write("No major risk drivers identified.")
+    st.write("No change in risk category")
 
 # =========================
-# RULE-BASED EXPLANATION
+# DRIVER EXPLANATION
 # =========================
-st.subheader("Explanation")
+st.subheader("Key Risk Factors")
 
-for factor, value in contributions.items():
-    st.write(f"• {factor} adds +{value} risk points")
+drivers = []
 
-# =========================
-# WHAT-IF ANALYSIS
-# =========================
-st.subheader("What-if Analysis")
+if input_data["Age"] >= 50: drivers.append("Age")
+if input_data["BMI"] >= 25: drivers.append("BMI")
+if input_data["Fiber_Consumption"] == "Low": drivers.append("Low Fiber")
+if input_data["Family_History"] == "Yes": drivers.append("Family History")
+if input_data["Smoking_Status"] == "Former": drivers.append("Smoking")
 
-new_smoking = st.selectbox("Change Smoking", ["No", "Former"], key="whatif")
-
-what_if_input = input_data.copy()
-what_if_input["Smoking"] = new_smoking
-
-new_score, _ = calculate_risk(what_if_input)
-change = new_score - score
-
-st.write(f"New Score: {new_score}/100")
-st.write(f"Change in Risk: {change:+}")
+if drivers:
+    for d in drivers:
+        st.write(f"• {d} contributes to increased risk")
+else:
+    st.write("No major high-risk indicators")
