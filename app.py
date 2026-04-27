@@ -28,6 +28,7 @@ st.sidebar.header("Patient Input")
 age = st.sidebar.slider("Age", 20, 90, 50)
 bmi = st.sidebar.slider("BMI", 15.0, 40.0, 25.0)
 
+gender = st.sidebar.selectbox("Gender", ["Female", "Male"])
 smoking = st.sidebar.selectbox("Smoking", ["No", "Former"])
 alcohol = st.sidebar.selectbox("Alcohol", ["Low", "Medium"])
 fiber = st.sidebar.selectbox("Fiber", ["Low", "Medium"])
@@ -44,6 +45,9 @@ input_dict = {col: 0 for col in features}
 
 input_dict["Age"] = age
 input_dict["BMI"] = bmi
+
+if "Gender_Male" in features and gender == "Male":
+    input_dict["Gender_Male"] = 1
 
 if "Smoking_Status_Former" in features and smoking == "Former":
     input_dict["Smoking_Status_Former"] = 1
@@ -68,7 +72,6 @@ input_df = pd.DataFrame([input_dict])
 # =========================
 risk = cph.predict_partial_hazard(input_df).values[0]
 
-# percentile (NO leakage)
 all_risk = cph.predict_partial_hazard(train_df)
 risk_percentile = (all_risk < risk).mean()
 
@@ -85,43 +88,54 @@ else:
 # =========================
 st.title("Colorectal Cancer Risk Dashboard")
 
-st.metric("Risk Percentile", f"{risk_percentile:.2f}")
+st.metric("Risk Percentile", f"{risk_percentile*100:.1f}%")
+st.write(f"Higher than {int(risk_percentile*100)}% of similar patients")
+
 st.metric("Risk Group", group)
 
 # =========================
-# CONTRIBUTIONS (EXPLAINABILITY)
+# CONTRIBUTIONS (BETTER INTERPRETATION)
 # =========================
 st.subheader("Top Risk Drivers")
 
 coefs = cph.params_
 contributions = (input_df.iloc[0] * coefs)
 
-# sort by absolute importance
+# sort by importance
 contributions = contributions.reindex(
     contributions.abs().sort_values(ascending=False).index
 )
 
 top_features = contributions.head(10)
 
-st.bar_chart(top_features)
+# convert to % impact
+impact = np.exp(top_features) - 1
+
+st.bar_chart(impact)
 
 # =========================
-# SIMILAR PATIENTS
+# SIMILAR PATIENTS (IMPROVED)
 # =========================
 st.subheader("Similar Patients")
 
 subset = train_df[
-    train_df["Age"].between(age - 5, age + 5)
+    (train_df["Age"].between(age - 5, age + 5)) &
+    (train_df["BMI"].between(bmi - 3, bmi + 3))
 ]
 
 subset_risk = cph.predict_partial_hazard(subset)
 
-st.write("Average Risk (similar patients):", round(subset_risk.mean(), 3))
+# convert to percentile for interpretation
+avg_percentile = (all_risk < subset_risk.mean()).mean()
 
-st.line_chart(np.sort(subset_risk.values))
+st.write(f"Average percentile of similar patients: {avg_percentile*100:.1f}%")
+
+# histogram instead of meaningless line
+hist_data = pd.Series(subset_risk.values)
+st.bar_chart(hist_data.value_counts(bins=20))
 
 # =========================
-# WHAT-IF ANALYSIS
+# WHAT-IF ANALYSIS (IMPROVED)
 # =========================
 st.subheader("What-if Analysis")
 
@@ -133,8 +147,9 @@ if "Smoking_Status_Former" in features:
     what_if["Smoking_Status_Former"] = 1 if new_smoking == "Former" else 0
 
 new_risk = cph.predict_partial_hazard(what_if).values[0]
+new_percentile = (all_risk < new_risk).mean()
 
-risk_change = new_risk - risk
+risk_change = new_percentile - risk_percentile
 
-st.write("New Risk:", round(new_risk, 3))
-st.write("Risk Change:", round(risk_change, 3))
+st.write(f"New Percentile: {new_percentile*100:.1f}%")
+st.write(f"Change in Risk: {risk_change*100:.1f}%")
